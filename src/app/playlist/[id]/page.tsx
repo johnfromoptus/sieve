@@ -621,6 +621,9 @@ export default function PlaylistPage() {
   const multiDragMeasurementsRef = useRef<{
     blockOriginalTop: number;
     blockHeight: number;
+    firstSongHeight: number;
+    lastSongHeight: number;
+    grabOffsetY: number; // distance from block top to grabbed item's top
     items: { id: string; originalCenterY: number; isBelow: boolean }[];
   } | null>(null);
 
@@ -1136,9 +1139,17 @@ export default function PlaylistPage() {
             .map(gid => document.querySelector(`[data-track-id="${gid}"]`))
             .filter(Boolean) as Element[];
           if (blockEls.length > 0) {
-            const blockTop = blockEls[0].getBoundingClientRect().top;
-            const blockBottom = blockEls[blockEls.length - 1].getBoundingClientRect().bottom;
+            const firstRect = blockEls[0].getBoundingClientRect();
+            const lastRect = blockEls[blockEls.length - 1].getBoundingClientRect();
+            const blockTop = firstRect.top;
+            const blockBottom = lastRect.bottom;
             const blockHeight = blockBottom - blockTop;
+            const firstSongHeight = firstRect.height;
+            const lastSongHeight = lastRect.height;
+
+            // How far the grabbed handle is from the block top
+            const activeEl = document.querySelector(`[data-track-id="${activeIdStr}"]`);
+            const grabOffsetY = activeEl ? activeEl.getBoundingClientRect().top - blockTop : 0;
 
             const remainingItems: { id: string; originalCenterY: number; isBelow: boolean }[] = [];
             for (const item of orderedItems) {
@@ -1154,7 +1165,7 @@ export default function PlaylistPage() {
                 isBelow: rect.top >= blockBottom - 1,
               });
             }
-            multiDragMeasurementsRef.current = { blockOriginalTop: blockTop, blockHeight, items: remainingItems };
+            multiDragMeasurementsRef.current = { blockOriginalTop: blockTop, blockHeight, firstSongHeight, lastSongHeight, grabOffsetY, items: remainingItems };
           }
         }
       }
@@ -1172,12 +1183,12 @@ export default function PlaylistPage() {
     const transforms = new Map<string, number>();
     for (const item of items) {
       if (item.isBelow) {
-        // Item was below the block: displace UP when block's bottom passes its center
+        // Item was below the block: displace UP when block's bottom edge passes item's center
         if (blockVirtualBottom > item.originalCenterY) {
           transforms.set(item.id, -blockHeight);
         }
       } else {
-        // Item was above the block: displace DOWN when block's top passes its center
+        // Item was above the block: displace DOWN when block's top edge passes item's center
         if (blockVirtualTop < item.originalCenterY) {
           transforms.set(item.id, blockHeight);
         }
@@ -1576,8 +1587,10 @@ export default function PlaylistPage() {
                       .map((gid) => orderedItems.find((item) => item.type === "track" && item.track.id === gid))
                       .filter((item): item is { type: "track"; track: Track } => !!item)
                       .map((item) => item.track);
+                    // Shift overlay so the grabbed item stays under the cursor, not the first item
+                    const grabOffset = multiDragMeasurementsRef.current?.grabOffsetY ?? 0;
                     return (
-                      <div className="rounded-lg shadow-2xl ring-1 ring-zinc-600 overflow-hidden">
+                      <div className="rounded-lg shadow-2xl ring-1 ring-zinc-600 overflow-hidden" style={{ marginTop: -grabOffset }}>
                         {draggedTracks.map((track, i) => (
                           <div
                             key={track.id}

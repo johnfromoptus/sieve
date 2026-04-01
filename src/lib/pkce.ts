@@ -7,8 +7,17 @@ export function generateCodeVerifier(): string {
 export async function generateCodeChallenge(verifier: string): Promise<string> {
   const encoder = new TextEncoder();
   const data = encoder.encode(verifier);
-  const digest = await crypto.subtle.digest("SHA-256", data);
-  return base64UrlEncode(new Uint8Array(digest));
+
+  // crypto.subtle is unavailable over plain HTTP (non-secure context).
+  // Fall back to a manual SHA-256 so PKCE works during dev over IP.
+  if (crypto.subtle) {
+    const digest = await crypto.subtle.digest("SHA-256", data);
+    return base64UrlEncode(new Uint8Array(digest));
+  }
+
+  // Minimal SHA-256: import dynamically to keep the bundle small
+  const { sha256 } = await import("./sha256");
+  return base64UrlEncode(sha256(data));
 }
 
 function base64UrlEncode(bytes: Uint8Array): string {
