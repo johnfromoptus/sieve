@@ -2,7 +2,7 @@
 
 import { useEffect, useLayoutEffect, useState, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, Plus, X, Tag, GripVertical, ChevronDown, ChevronRight, FolderPlus, Trash2 } from "lucide-react";
+import { ArrowLeft, Plus, X, Tag, GripVertical, ChevronDown, ChevronRight, FolderPlus, Trash2, Palette } from "lucide-react";
 import {
   DndContext,
   closestCenter,
@@ -238,7 +238,7 @@ function TrackRowContent({
             <Tag size={14} />
           </button>
           {tagPopoverTrack === track.id && (
-            <div className="absolute right-0 top-8 z-10 min-w-48 rounded-lg border border-zinc-700 bg-zinc-900 p-2 shadow-xl">
+            <div className="absolute right-0 top-8 z-10 min-w-48 rounded-lg border border-zinc-700 bg-zinc-900 p-2 shadow-xl" onClick={(e) => e.stopPropagation()}>
               <div className="mb-1 px-2 text-xs font-medium text-zinc-500">Assign tags</div>
               {allTags.length === 0 ? (
                 <p className="px-2 py-1 text-sm text-zinc-500">No tags yet</p>
@@ -390,6 +390,7 @@ function SortableTrackRow({
   onColorChange,
   selected,
   onRowClick,
+  onRowContextMenu,
   selectedTracks,
   onClearSelection,
   isMultiDragActive,
@@ -410,6 +411,7 @@ function SortableTrackRow({
   onColorChange: (trackId: string, color: string | null) => void;
   selected: boolean;
   onRowClick: (trackId: string, e: React.MouseEvent) => void;
+  onRowContextMenu: (trackId: string, e: React.MouseEvent) => void;
   selectedTracks: Set<string>;
   onClearSelection: () => void;
   isMultiDragActive?: boolean;
@@ -432,7 +434,7 @@ function SortableTrackRow({
     <div
       ref={setNodeRef}
       data-track-id={track.id}
-      className={`group flex items-center gap-4 rounded-lg px-4 py-3 transition ${selected ? "bg-zinc-700 hover:bg-zinc-700" : "hover:bg-zinc-900"}`}
+      className={`group flex items-center gap-4 rounded-lg px-4 py-3 my-0.5 transition ${selected ? "bg-zinc-700 hover:bg-zinc-700" : "hover:bg-zinc-900"}`}
       style={{
         transform: hidden
           ? undefined
@@ -444,6 +446,7 @@ function SortableTrackRow({
       }}
       onMouseDown={(e) => { if (e.shiftKey || e.ctrlKey || e.metaKey) e.preventDefault(); }}
       onClick={(e) => onRowClick(track.id, e)}
+      onContextMenu={(e) => { e.preventDefault(); onRowContextMenu(track.id, e); }}
     >
       <TrackRowContent
         track={track}
@@ -486,6 +489,7 @@ function SortableGroup({
   onColorChange,
   selectedTracks,
   onRowClick,
+  onRowContextMenu,
   onClearSelection,
 }: {
   group: Group;
@@ -504,6 +508,7 @@ function SortableGroup({
   onColorChange: (trackId: string, color: string | null) => void;
   selectedTracks: Set<string>;
   onRowClick: (trackId: string, e: React.MouseEvent) => void;
+  onRowContextMenu: (trackId: string, e: React.MouseEvent) => void;
   onClearSelection: () => void;
 }) {
   const [collapsed, setCollapsed] = useState(false);
@@ -519,6 +524,7 @@ function SortableGroup({
   return (
     <div
       ref={setNodeRef}
+      data-group-id={group.id}
       className="mb-2 rounded-xl border border-zinc-800"
       style={{
         transform: isDragging ? undefined : CSS.Transform.toString(transform),
@@ -573,6 +579,7 @@ function SortableGroup({
                 onColorChange={onColorChange}
                 selected={selectedTracks.has(track.id)}
                 onRowClick={onRowClick}
+                onRowContextMenu={onRowContextMenu}
                 selectedTracks={selectedTracks}
                 onClearSelection={onClearSelection}
               />
@@ -613,6 +620,7 @@ export default function PlaylistPage() {
   const [showCopyInput, setShowCopyInput] = useState(false);
   const publishMenuRef = useRef<HTMLDivElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
+  const newTagFormRef = useRef<HTMLDivElement>(null);
 
   const lastPointerYRef = useRef(0);
 
@@ -632,13 +640,29 @@ export default function PlaylistPage() {
   const lastSelectedRef = useRef<string | null>(null);
   const trackListRef = useRef<HTMLDivElement>(null);
 
+  // Group entity drag snapshot (positions frozen at drag start for stable collision detection)
+  const groupDragSnapshotRef = useRef<{
+    items: { id: UniqueIdentifier; originalCenterY: number; isBelow: boolean }[];
+  } | null>(null);
+
   // Multi-drag state
   const groupDragRef = useRef<string[] | null>(null); // ordered IDs being dragged as a group
   const [groupDragActiveIds, setGroupDragActiveIds] = useState<Set<string>>(new Set());
 
   // Row context menu
   const [rowContextMenu, setRowContextMenu] = useState<{ trackId: string; x: number; y: number } | null>(null);
+  const [rowContextMenuGroupOpen, setRowContextMenuGroupOpen] = useState(false);
+  const [rowContextMenuGroupNewInput, setRowContextMenuGroupNewInput] = useState(false);
+  const [rowContextMenuGroupNewName, setRowContextMenuGroupNewName] = useState("");
   const rowContextMenuRef = useRef<HTMLDivElement>(null);
+  const floatingBarRef = useRef<HTMLDivElement>(null);
+  const [floatingColorOpen, setFloatingColorOpen] = useState(false);
+  const [floatingGroupOpen, setFloatingGroupOpen] = useState(false);
+  const [floatingTagOpen, setFloatingTagOpen] = useState(false);
+  const [floatingTagNewName, setFloatingTagNewName] = useState("");
+  const [floatingTagNewColor, setFloatingTagNewColor] = useState(TAG_COLORS[0]);
+  const [floatingGroupNewInput, setFloatingGroupNewInput] = useState(false);
+  const [floatingGroupNewName, setFloatingGroupNewName] = useState("");
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -679,8 +703,21 @@ export default function PlaylistPage() {
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
+      if (showNewTag && newTagFormRef.current && !newTagFormRef.current.contains(e.target as Node)) {
+        setShowNewTag(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [showNewTag]);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
       if (rowContextMenu && rowContextMenuRef.current && !rowContextMenuRef.current.contains(e.target as Node)) {
         setRowContextMenu(null);
+        setRowContextMenuGroupOpen(false);
+        setRowContextMenuGroupNewInput(false);
+        setRowContextMenuGroupNewName("");
       }
     }
     document.addEventListener("mousedown", handleClickOutside);
@@ -689,13 +726,30 @@ export default function PlaylistPage() {
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
-      if (selectedTracks.size > 0 && trackListRef.current && !trackListRef.current.contains(e.target as Node)) {
+      if (
+        selectedTracks.size > 0 &&
+        trackListRef.current && !trackListRef.current.contains(e.target as Node) &&
+        !(floatingBarRef.current && floatingBarRef.current.contains(e.target as Node)) &&
+        !(rowContextMenuRef.current && rowContextMenuRef.current.contains(e.target as Node))
+      ) {
         setSelectedTracks(new Set());
       }
     }
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [selectedTracks]);
+
+  // Reset floating popover state whenever selection is cleared
+  useEffect(() => {
+    if (selectedTracks.size === 0) {
+      setFloatingTagOpen(false);
+      setFloatingTagNewName("");
+      setFloatingGroupOpen(false);
+      setFloatingGroupNewInput(false);
+      setFloatingGroupNewName("");
+      setFloatingColorOpen(false);
+    }
+  }, [selectedTracks.size]);
 
   const loadPlaylist = useCallback(async () => {
     const res = await fetch(`/api/playlists/${id}`);
@@ -748,31 +802,40 @@ export default function PlaylistPage() {
   }
 
   async function toggleTagOnTrack(trackId: string, tag: TagData, hasTag: boolean) {
+    const ids = selectedTracks.has(trackId) && selectedTracks.size > 1
+      ? [...selectedTracks]
+      : [trackId];
+    const idSet = new Set(ids);
     setPlaylist((prev) => {
       if (!prev) return prev;
       return {
         ...prev,
         tracks: prev.tracks.map((track) => {
-          if (track.id !== trackId) return track;
+          if (!idSet.has(track.id)) return track;
           return { ...track, tags: hasTag ? track.tags.filter((t) => t.id !== tag.id) : [...track.tags, tag] };
         }),
       };
     });
-    const url = `/api/playlists/${id}/tracks/${trackId}/tags`;
-    const res = hasTag
-      ? await fetch(url, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tagId: tag.id }) })
-      : await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tagId: tag.id }) });
-    if (!res.ok) {
-      setPlaylist((prev) => {
-        if (!prev) return prev;
-        return {
-          ...prev,
-          tracks: prev.tracks.map((track) => {
-            if (track.id !== trackId) return track;
-            return { ...track, tags: hasTag ? [...track.tags, tag] : track.tags.filter((t) => t.id !== tag.id) };
-          }),
-        };
-      });
+    const results = await Promise.all(ids.map((tid) => {
+      const url = `/api/playlists/${id}/tracks/${tid}/tags`;
+      return hasTag
+        ? fetch(url, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tagId: tag.id }) })
+        : fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tagId: tag.id }) });
+    }));
+    for (let i = 0; i < results.length; i++) {
+      if (!results[i].ok) {
+        const tid = ids[i];
+        setPlaylist((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            tracks: prev.tracks.map((track) => {
+              if (track.id !== tid) return track;
+              return { ...track, tags: hasTag ? [...track.tags, tag] : track.tags.filter((t) => t.id !== tag.id) };
+            }),
+          };
+        });
+      }
     }
   }
 
@@ -866,15 +929,21 @@ export default function PlaylistPage() {
   // ── Colour operations ──
 
   function handleColorChange(trackId: string, color: string | null) {
+    const ids = selectedTracks.has(trackId) && selectedTracks.size > 1
+      ? [...selectedTracks]
+      : [trackId];
     setPlaylist((prev) => {
       if (!prev) return prev;
-      return { ...prev, tracks: prev.tracks.map((t) => t.id === trackId ? { ...t, color } : t) };
+      const idSet = new Set(ids);
+      return { ...prev, tracks: prev.tracks.map((t) => idSet.has(t.id) ? { ...t, color } : t) };
     });
-    fetch(`/api/playlists/${id}/tracks/${trackId}/color`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ color }),
-    });
+    for (const tid of ids) {
+      fetch(`/api/playlists/${id}/tracks/${tid}/color`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ color }),
+      });
+    }
   }
 
   // ── Inline tag creation ──
@@ -933,20 +1002,90 @@ export default function PlaylistPage() {
     });
   }
 
+  async function createTagAndAssignToAll(trackIds: string[], name: string, color: string) {
+    const tempId = crypto.randomUUID();
+    const optimisticTag: TagData = { id: tempId, name, color };
+    const idSet = new Set(trackIds);
+    setAllTags((prev) => [...prev, optimisticTag]);
+    setPlaylist((prev) => {
+      if (!prev) return prev;
+      return { ...prev, tracks: prev.tracks.map((t) => idSet.has(t.id) ? { ...t, tags: [...t.tags, optimisticTag] } : t) };
+    });
+    const res = await fetch("/api/tags", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, color }),
+    });
+    if (!res.ok) {
+      setAllTags((prev) => prev.filter((t) => t.id !== tempId));
+      setPlaylist((prev) => {
+        if (!prev) return prev;
+        return { ...prev, tracks: prev.tracks.map((t) => idSet.has(t.id) ? { ...t, tags: t.tags.filter((tg) => tg.id !== tempId) } : t) };
+      });
+      return;
+    }
+    const realTag: TagData = await res.json();
+    setAllTags((prev) => prev.map((t) => t.id === tempId ? realTag : t));
+    setPlaylist((prev) => {
+      if (!prev) return prev;
+      return { ...prev, tracks: prev.tracks.map((t) => idSet.has(t.id) ? { ...t, tags: t.tags.map((tg) => tg.id === tempId ? realTag : tg) } : t) };
+    });
+    for (const trackId of trackIds) {
+      fetch(`/api/playlists/${id}/tracks/${trackId}/tags`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tagId: realTag.id }),
+      });
+    }
+  }
+
   // ── Inline group creation ──
 
   async function createGroupAndAssign(trackIds: string[], name: string) {
     if (!playlist) return;
+    const tempId = `temp-${Date.now()}`;
+    const firstTrack = playlist.tracks.find((t) => trackIds.includes(t.id));
+    const tempGroup: Group = { id: tempId, name, position: firstTrack?.position ?? 0, color: null };
+    const idSet = new Set(trackIds);
+    // Optimistic update: show group immediately
+    setPlaylist((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        groups: [...prev.groups, tempGroup],
+        tracks: prev.tracks.map((t) =>
+          idSet.has(t.id) ? { ...t, group_id: tempId, group_position: t.position } : t
+        ),
+      };
+    });
     const res = await fetch(`/api/playlists/${id}/groups`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name }),
     });
-    if (!res.ok) return;
+    if (!res.ok) {
+      setPlaylist((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          groups: prev.groups.filter((g) => g.id !== tempId),
+          tracks: prev.tracks.map((t) => t.group_id === tempId ? { ...t, group_id: null, group_position: null } : t),
+        };
+      });
+      return;
+    }
     const newGroup: Group = await res.json();
-    setPlaylist((prev) => prev ? { ...prev, groups: [...prev.groups, newGroup] } : prev);
+    setPlaylist((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        groups: prev.groups.map((g) => g.id === tempId ? newGroup : g),
+        tracks: prev.tracks.map((t) => t.group_id === tempId ? { ...t, group_id: newGroup.id } : t),
+      };
+    });
+    // Persist track assignments in background
     for (const trackId of trackIds) {
-      await assignTrackToGroup(trackId, newGroup.id);
+      assignTrackToGroup(trackId, newGroup.id);
     }
   }
 
@@ -1101,8 +1240,56 @@ export default function PlaylistPage() {
       return closest ? [{ id: closest.id }] : [];
     }
 
-    if (active.data.current?.type !== "track") {
-      return closestCenter({ ...args, droppableContainers: eligibleContainers });
+    // Group drag: threshold-based displacement using frozen snapshot positions.
+    //
+    // Only return an "over" when the group's leading edge has actually crossed an item's
+    // original center — otherwise return nothing (dnd-kit shows no displacement, which
+    // means the original order is preserved). This avoids oscillation: live rects change
+    // as items animate after each sort, causing rapid re-triggering. Snapshot positions
+    // are stable, so the threshold is a clean one-way crossing with no feedback loop.
+    //
+    // Reversal works because the threshold is purely positional:
+    //   - Moving down:  bottom > item.originalCenterY  → displace that item up
+    //   - Moving back:  bottom ≤ item.originalCenterY  → no candidate → no displacement
+    if (active.data.current?.type === "group") {
+      const snapshot = groupDragSnapshotRef.current;
+      const translatedRect = active.rect.current.translated;
+      if (!snapshot || !translatedRect) {
+        return closestCenter({ active, droppableContainers: modifiedContainers, droppableRects: modifiedRects, pointerCoordinates, ...rest });
+      }
+
+      // Among items whose threshold has been crossed, find the "deepest" one in each direction.
+      // For items below (isBelow=true): want the one with the largest originalCenterY crossed.
+      // For items above (isBelow=false): want the one with the smallest originalCenterY crossed.
+      let bestBelowId: UniqueIdentifier | null = null;
+      let bestBelowCenterY = -Infinity;
+      let bestAboveId: UniqueIdentifier | null = null;
+      let bestAboveCenterY = Infinity;
+
+      for (const item of snapshot.items) {
+        if (!modifiedContainers.some(c => c.id === item.id)) continue;
+        if (item.isBelow) {
+          if (translatedRect.bottom > item.originalCenterY && item.originalCenterY > bestBelowCenterY) {
+            bestBelowCenterY = item.originalCenterY;
+            bestBelowId = item.id;
+          }
+        } else {
+          if (translatedRect.top < item.originalCenterY && item.originalCenterY < bestAboveCenterY) {
+            bestAboveCenterY = item.originalCenterY;
+            bestAboveId = item.id;
+          }
+        }
+      }
+
+      // If candidates exist in both directions (unusual), prefer the smaller overshoot
+      if (bestBelowId !== null && bestAboveId !== null) {
+        const belowOvershoot = translatedRect.bottom - bestBelowCenterY;
+        const aboveOvershoot = bestAboveCenterY - translatedRect.top;
+        return [{ id: belowOvershoot <= aboveOvershoot ? bestBelowId : bestAboveId }];
+      }
+      if (bestBelowId !== null) return [{ id: bestBelowId }];
+      if (bestAboveId !== null) return [{ id: bestAboveId }];
+      return []; // No threshold crossed → no displacement
     }
     return closestCenter({ active, droppableContainers: modifiedContainers, droppableRects: modifiedRects, pointerCoordinates, ...rest });
   }, []);
@@ -1112,7 +1299,7 @@ export default function PlaylistPage() {
     setActiveId(activeIdStr);
     groupDragRef.current = null;
     setGroupDragActiveIds(new Set());
-
+    groupDragSnapshotRef.current = null;
     // Check for adjacent multi-track group drag
     if (selectedTracks.has(activeIdStr) && selectedTracks.size >= 2) {
       // Only support multi-drag for top-level ungrouped tracks
@@ -1170,6 +1357,32 @@ export default function PlaylistPage() {
         }
       }
     }
+
+    // Group entity drag: snapshot original positions so the threshold-based collision
+    // detection has stable reference points throughout the drag.
+    if (activeIdStr.startsWith("group-")) {
+      const groupId = activeIdStr.replace("group-", "");
+      const groupEl = document.querySelector(`[data-group-id="${groupId}"]`);
+      if (groupEl) {
+        const groupBottom = groupEl.getBoundingClientRect().bottom;
+        const snapshotItems: { id: UniqueIdentifier; originalCenterY: number; isBelow: boolean }[] = [];
+        for (const item of orderedItems) {
+          const itemId = item.type === "track" ? item.track.id : `group-${item.group.id}`;
+          if (itemId === activeIdStr) continue;
+          const el = item.type === "track"
+            ? document.querySelector(`[data-track-id="${item.track.id}"]`)
+            : document.querySelector(`[data-group-id="${item.group.id}"]`);
+          if (!el) continue;
+          const rect = el.getBoundingClientRect();
+          snapshotItems.push({
+            id: itemId,
+            originalCenterY: rect.top + rect.height / 2,
+            isBelow: rect.top >= groupBottom - 1,
+          });
+        }
+        groupDragSnapshotRef.current = { items: snapshotItems };
+      }
+    }
   }
 
   function handleDragMove(event: DragMoveEvent) {
@@ -1203,6 +1416,7 @@ export default function PlaylistPage() {
     groupDragRef.current = null;
     setGroupDragActiveIds(new Set());
     multiDragMeasurementsRef.current = null;
+    groupDragSnapshotRef.current = null;
     setMultiDragTransforms(new Map());
 
     const { active, over } = event;
@@ -1455,7 +1669,7 @@ export default function PlaylistPage() {
                 </button>
               )}
               {showNewTag ? (
-                <div className="flex items-center gap-2">
+                <div ref={newTagFormRef} className="flex items-center gap-2">
                   <input
                     type="text"
                     value={newTagName}
@@ -1546,6 +1760,7 @@ export default function PlaylistPage() {
                         onColorChange={handleColorChange}
                         selected={selectedTracks.has(item.track.id)}
                         onRowClick={handleRowClick}
+                        onRowContextMenu={(trackId, e) => setRowContextMenu({ trackId, x: e.clientX, y: e.clientY })}
                         selectedTracks={selectedTracks}
                         onClearSelection={() => setSelectedTracks(new Set())}
                         isMultiDragActive={isMultiDragActive}
@@ -1572,6 +1787,7 @@ export default function PlaylistPage() {
                         onColorChange={handleColorChange}
                         selectedTracks={selectedTracks}
                         onRowClick={handleRowClick}
+                        onRowContextMenu={(trackId, e) => setRowContextMenu({ trackId, x: e.clientX, y: e.clientY })}
                         onClearSelection={() => setSelectedTracks(new Set())}
                       />
                     );
@@ -1705,37 +1921,251 @@ export default function PlaylistPage() {
       {rowContextMenu && (
         <div
           ref={rowContextMenuRef}
-          className="fixed z-50 min-w-40 rounded-lg border border-zinc-700 bg-zinc-900 p-1 shadow-xl"
+          className="fixed z-50 min-w-48 rounded-lg border border-zinc-700 bg-zinc-900 p-1 shadow-xl"
           style={{ top: rowContextMenu.y, left: rowContextMenu.x }}
         >
-          <button
-            onClick={() => { setTagPopoverTrack(rowContextMenu.trackId); setRowContextMenu(null); }}
-            className="flex w-full items-center gap-2 rounded px-3 py-2 text-sm text-white transition hover:bg-zinc-800"
-          >
-            <Tag size={14} />
-            Assign tag
-          </button>
-          <button
-            onClick={() => { setRowContextMenu(null); }}
-            className="flex w-full items-center gap-2 rounded px-3 py-2 text-sm text-white transition hover:bg-zinc-800"
-          >
-            <FolderPlus size={14} />
-            Add to group
-          </button>
+          {!rowContextMenuGroupOpen ? (
+            <>
+              <button
+                onClick={() => { setTagPopoverTrack(rowContextMenu.trackId); setRowContextMenu(null); }}
+                className="flex w-full items-center gap-2 rounded px-3 py-2 text-sm text-white transition hover:bg-zinc-800"
+              >
+                <Tag size={14} />
+                Assign tag
+              </button>
+              <button
+                onClick={() => setRowContextMenuGroupOpen(true)}
+                className="flex w-full items-center gap-2 rounded px-3 py-2 text-sm text-white transition hover:bg-zinc-800"
+              >
+                <FolderPlus size={14} />
+                Add to group
+              </button>
+            </>
+          ) : (
+            <>
+              <div className="mb-1 px-3 pt-1 text-xs font-medium text-zinc-500">Add to group</div>
+              {groups.map((g) => {
+                const trackIds = selectedTracks.has(rowContextMenu.trackId) && selectedTracks.size > 1
+                  ? [...selectedTracks] : [rowContextMenu.trackId];
+                return (
+                  <button
+                    key={g.id}
+                    onClick={() => {
+                      trackIds.forEach((tid) => assignTrackToGroup(tid, g.id));
+                      setRowContextMenu(null);
+                      setRowContextMenuGroupOpen(false);
+                    }}
+                    className="flex w-full items-center gap-2 rounded px-3 py-2 text-sm text-white transition hover:bg-zinc-800"
+                  >
+                    {g.name}
+                  </button>
+                );
+              })}
+              {rowContextMenuGroupNewInput ? (
+                <div className="flex items-center gap-1 px-2 py-1">
+                  <input
+                    autoFocus
+                    value={rowContextMenuGroupNewName}
+                    onChange={(e) => setRowContextMenuGroupNewName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && rowContextMenuGroupNewName.trim()) {
+                        const trackIds = selectedTracks.has(rowContextMenu.trackId) && selectedTracks.size > 1
+                          ? [...selectedTracks] : [rowContextMenu.trackId];
+                        createGroupAndAssign(trackIds, rowContextMenuGroupNewName.trim());
+                        setRowContextMenu(null);
+                        setRowContextMenuGroupOpen(false);
+                        setRowContextMenuGroupNewInput(false);
+                        setRowContextMenuGroupNewName("");
+                      }
+                      if (e.key === "Escape") { setRowContextMenuGroupNewInput(false); setRowContextMenuGroupNewName(""); }
+                    }}
+                    placeholder="Group name…"
+                    className="flex-1 rounded bg-zinc-800 px-2 py-1 text-sm text-white outline-none"
+                  />
+                </div>
+              ) : (
+                <button
+                  onClick={() => setRowContextMenuGroupNewInput(true)}
+                  className="flex w-full items-center gap-2 rounded px-3 py-2 text-sm text-zinc-400 transition hover:bg-zinc-800 hover:text-white"
+                >
+                  <Plus size={12} /> New group…
+                </button>
+              )}
+            </>
+          )}
         </div>
       )}
 
       {/* Floating selection bar */}
       <div
-        className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-4 rounded-full bg-zinc-800 px-6 py-3 shadow-2xl ring-1 ring-zinc-700 transition-all duration-200 ${selectedTracks.size >= 2 ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4 pointer-events-none"}`}
+        ref={floatingBarRef}
+        className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-50 transition-all duration-200 ${selectedTracks.size >= 2 ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4 pointer-events-none"}`}
       >
-        <span className="text-sm font-medium text-white">{selectedTracks.size} tracks selected</span>
-        <button
-          onClick={() => setSelectedTracks(new Set())}
-          className="rounded-full p-1 text-zinc-400 transition hover:bg-zinc-700 hover:text-white"
-        >
-          <X size={14} />
-        </button>
+        {/* Tag popover */}
+        {floatingTagOpen && (
+          <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 min-w-48 rounded-lg border border-zinc-700 bg-zinc-900 p-2 shadow-xl">
+            <div className="mb-1 px-2 text-xs font-medium text-zinc-500">Assign tags</div>
+            {allTags.length === 0 && !floatingTagNewName ? (
+              <p className="px-2 py-1 text-sm text-zinc-500">No tags yet</p>
+            ) : (
+              allTags.map((tag) => {
+                const selectedIds = [...selectedTracks];
+                const hasTag = selectedIds.every((tid) => {
+                  const t = playlist?.tracks.find((tr) => tr.id === tid);
+                  return t?.tags.some((tg) => tg.id === tag.id);
+                });
+                return (
+                  <button
+                    key={tag.id}
+                    onClick={() => toggleTagOnTrack(selectedIds[0], tag, hasTag)}
+                    className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-sm transition hover:bg-zinc-800"
+                  >
+                    <span className="h-3 w-3 flex-shrink-0 rounded-full" style={{ backgroundColor: tag.color || "#6b7280" }} />
+                    <span className="flex-1 text-left text-white">{tag.name}</span>
+                    {hasTag && <X size={12} className="text-zinc-400" />}
+                  </button>
+                );
+              })
+            )}
+            <div className="mt-2 border-t border-zinc-700 pt-2">
+              <p className="mb-1 px-2 text-xs font-medium text-zinc-500">New tag</p>
+              <input
+                type="text"
+                value={floatingTagNewName}
+                onChange={(e) => setFloatingTagNewName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && floatingTagNewName.trim()) {
+                    createTagAndAssignToAll([...selectedTracks], floatingTagNewName.trim(), floatingTagNewColor);
+                    setFloatingTagNewName("");
+                    setFloatingTagNewColor(TAG_COLORS[Math.floor(Math.random() * TAG_COLORS.length)]);
+                  }
+                }}
+                placeholder="Tag name"
+                className="w-full rounded border border-zinc-700 bg-zinc-800 px-2 py-1 text-sm text-white placeholder-zinc-500 outline-none focus:border-zinc-500"
+              />
+              <div className="mt-1.5 flex gap-1 px-0.5">
+                {TAG_COLORS.map((c) => (
+                  <button
+                    key={c}
+                    onClick={() => setFloatingTagNewColor(c)}
+                    className="h-4 w-4 rounded-full transition"
+                    style={{ backgroundColor: c, outline: floatingTagNewColor === c ? "2px solid white" : "none", outlineOffset: "1px" }}
+                  />
+                ))}
+              </div>
+              <button
+                onClick={() => {
+                  if (!floatingTagNewName.trim()) return;
+                  createTagAndAssignToAll([...selectedTracks], floatingTagNewName.trim(), floatingTagNewColor);
+                  setFloatingTagNewName("");
+                  setFloatingTagNewColor(TAG_COLORS[Math.floor(Math.random() * TAG_COLORS.length)]);
+                }}
+                className="mt-2 w-full rounded bg-zinc-700 px-2 py-1 text-xs text-white transition hover:bg-zinc-600"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        )}
+        {/* Group popover */}
+        {floatingGroupOpen && (
+          <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 min-w-48 rounded-lg border border-zinc-700 bg-zinc-900 p-1 shadow-xl">
+            {groups.map((g) => (
+              <button
+                key={g.id}
+                onClick={() => {
+                  [...selectedTracks].forEach((tid) => assignTrackToGroup(tid, g.id));
+                  setFloatingGroupOpen(false);
+                  setSelectedTracks(new Set());
+                }}
+                className="flex w-full items-center gap-2 rounded px-3 py-2 text-sm text-white transition hover:bg-zinc-800"
+              >
+                {g.name}
+              </button>
+            ))}
+            {floatingGroupNewInput ? (
+              <div className="flex items-center gap-1 px-2 py-1">
+                <input
+                  autoFocus
+                  value={floatingGroupNewName}
+                  onChange={(e) => setFloatingGroupNewName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && floatingGroupNewName.trim()) {
+                      createGroupAndAssign([...selectedTracks], floatingGroupNewName.trim());
+                      setFloatingGroupNewName("");
+                      setFloatingGroupNewInput(false);
+                      setFloatingGroupOpen(false);
+                      setSelectedTracks(new Set());
+                    }
+                    if (e.key === "Escape") { setFloatingGroupNewInput(false); setFloatingGroupNewName(""); }
+                  }}
+                  placeholder="Group name…"
+                  className="flex-1 rounded bg-zinc-800 px-2 py-1 text-sm text-white outline-none"
+                />
+              </div>
+            ) : (
+              <button
+                onClick={() => setFloatingGroupNewInput(true)}
+                className="flex w-full items-center gap-2 rounded px-3 py-2 text-sm text-zinc-400 transition hover:bg-zinc-800 hover:text-white"
+              >
+                <Plus size={12} /> New group…
+              </button>
+            )}
+          </div>
+        )}
+        {/* Colour popover */}
+        {floatingColorOpen && (
+          <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 rounded-lg border border-zinc-700 bg-zinc-900 p-2 shadow-xl">
+            <div className="flex gap-1.5">
+              {TAG_COLORS.map((c) => (
+                <button
+                  key={c}
+                  onClick={() => { handleColorChange([...selectedTracks][0], c); setFloatingColorOpen(false); }}
+                  className="h-5 w-5 flex-shrink-0 rounded-full transition hover:scale-110"
+                  style={{ backgroundColor: c }}
+                />
+              ))}
+            </div>
+            <button
+              onClick={() => { handleColorChange([...selectedTracks][0], null); setFloatingColorOpen(false); }}
+              className="mt-1 w-full rounded px-2 py-0.5 text-xs text-zinc-400 hover:bg-zinc-800 hover:text-white"
+            >
+              Clear
+            </button>
+          </div>
+        )}
+        <div className="flex items-center gap-3 rounded-full bg-zinc-800 px-5 py-3 shadow-2xl ring-1 ring-zinc-700">
+          <span className="text-sm font-medium text-white">{selectedTracks.size} tracks selected</span>
+          <div className="h-4 w-px bg-zinc-600" />
+          <button
+            onClick={() => { setFloatingTagOpen((o) => !o); setFloatingGroupOpen(false); setFloatingColorOpen(false); }}
+            title="Assign tag"
+            className="rounded p-1 text-zinc-400 transition hover:bg-zinc-700 hover:text-white"
+          >
+            <Tag size={14} />
+          </button>
+          <button
+            onClick={() => { setFloatingGroupOpen((o) => !o); setFloatingTagOpen(false); setFloatingColorOpen(false); }}
+            title="Add to group"
+            className="rounded p-1 text-zinc-400 transition hover:bg-zinc-700 hover:text-white"
+          >
+            <FolderPlus size={14} />
+          </button>
+          <button
+            onClick={() => { setFloatingColorOpen((o) => !o); setFloatingGroupOpen(false); setFloatingTagOpen(false); }}
+            title="Set colour"
+            className="rounded p-1 text-zinc-400 transition hover:bg-zinc-700 hover:text-white"
+          >
+            <Palette size={14} />
+          </button>
+          <div className="h-4 w-px bg-zinc-600" />
+          <button
+            onClick={() => setSelectedTracks(new Set())}
+            className="rounded-full p-1 text-zinc-400 transition hover:bg-zinc-700 hover:text-white"
+          >
+            <X size={14} />
+          </button>
+        </div>
       </div>
     </div>
   );
