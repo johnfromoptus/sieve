@@ -17,6 +17,15 @@
 - Track metadata is cached in DB at import time (Spotify's `/tracks` batch endpoint is restricted in dev mode)
 - All edits are local until user explicitly publishes to Spotify
 
+## Drag and Drop
+
+The playlist page uses dnd-kit with a **custom collision detection** function. Three modes:
+- Single track drag: falls through to `closestCenter`
+- Multi-select drag: pointer Y vs live rects; visual displacement via `handleDragMove` + `multiDragTransforms` state
+- Group entity drag: **frozen snapshot + threshold crossing** — see below
+
+**Do NOT use live rects for group drag collision.** They oscillate: item displaces → live center moves near group edge → immediately re-triggers → infinite flip. The fix: snapshot all item positions at drag start (`groupDragSnapshotRef`), then only return an `over` when the group's leading edge has crossed an item's snapshotted center. Return `[]` when no threshold is crossed — dnd-kit reverts to original order, which handles direction reversal without updating the snapshot.
+
 ## Spotify API Gotchas
 - Field renames: `tracks` → `items` in playlist responses, `item.track` → `item.item`
 - Endpoint renames: `/playlists/{id}/tracks` → `/playlists/{id}/items`

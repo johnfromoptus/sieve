@@ -1,26 +1,49 @@
 ## Sieve TODO
 
-### UX Polish
-- [x] Replace tag delete hover-X with right-click context menu
-- [x] Maintain scroll position when toggling tag filters (currently snaps to top)
-- [x] Move drag handle (grip bar) to the right side of tracks and groups (currently on the left)
-- [x] Randomise tag colour when creating a tag via Enter without manually picking a colour
-- [ ] Track colour bar: add a thin vertical bar to the left edge of album art per track. Invisible by default, outline appears on hover, clicking opens a colour picker tooltip to set the bar's fill+outline colour. Purely visual categorisation, independent of tags — not filterable.
-
-### Track Tagging & Grouping (Inline)
-- [ ] Inline tag creation in track tag popover: add a "New tag" form at the bottom of the per-track tag assignment popover. Creates the tag and immediately applies it to the track — no need to scroll to the top filter bar first.
-- [ ] Inline group creation in track group menu: always show the FolderPlus icon (currently hidden when no groups exist). Add a "New group..." option at the bottom of the dropdown. Creates the group at the track's current position and assigns the track to it in one action.
-
-### Multi-Select
-- [ ] Click row body to select a track (deselects others). Ctrl/Cmd+click toggles individual tracks. Shift+click range-selects. Clicking tag icon, group icon, drag handle, or other buttons on a row does NOT trigger selection.
-- [ ] Tag/group icon selection rules: clicking an icon on a SELECTED track operates on ALL selected tracks; clicking an icon on an UNSELECTED track operates on only that track (selection unchanged).
-- [ ] Floating selection bar: appears at the bottom of the screen when 2+ tracks are selected, showing "N tracks selected" and a clear-selection button.
-- [ ] Right-click context menu on track rows: shows "Assign tag" and "Add to group" options, opening the same inline popovers. Follows the selected/unselected rules above. Inline tag/group creation within the context menu is deferred — covered by the inline creation tasks above.
+### Bugs
+- [ ] Tag filter AND logic: when multiple tags are selected, only show tracks that have ALL selected tags (current behaviour is OR — clicking a second tag doesn't narrow the results)
 
 ### Drag-and-Drop
 - [ ] Drag-to-combine: drag a track onto a group header to add it to the group (custom collision detection)
-- [x] Fix drag stickiness: switched to DragOverlay — dragged item now renders as floating clone under cursor
-- [x] Fix group drag visual: DragOverlay renders group at full natural dimensions
+
+### Search & Navigation (Playlist Editor)
+- [ ] Search/filter within playlist: real-time filter rows by title, artist, or album
+- [ ] Sort options: sort track list by title, artist, duration, or restore original Spotify order
+
+### Track Actions
+- [ ] "Remove from playlist" in right-click context menu (with confirmation dialog before deleting)
+
+### Drafts & Publishing
+- [ ] Draft saving: save current state locally without publishing to Spotify, so you can come back to it later
+- [ ] Publish diff: show how many changes are pending (like a git diff count) before publishing
+- [ ] Dirty state on Publish button: visually distinguish "no changes" vs "X unsaved changes" vs "synced"
+- [ ] Auto-persist local edits (reorder, tags, groups) so navigating away and back doesn't lose work
+- [ ] "Has unsaved changes" badge on playlist cards on the dashboard
+
+### Undo / Redo
+- [ ] Undo/redo for track reorder and tag/group operations — either Cmd+Z/Cmd+Shift+Z or a floating undo button on screen
+
+### Navigation & Chrome
+- [ ] Global top bar across all pages: "sieve" wordmark (links to dashboard) on the left; breadcrumb on playlist page (e.g. "Your playlists / testing"); Publish button moves from page header into the top bar right side; user avatar/logout on far right. Dashboard gets the same bar with "Import from Spotify" on the right instead of loose in the page body.
+
+### Feedback & Polish
+- [ ] Loading skeletons: replace "Loading..." text on dashboard and playlist page with skeleton rows
+- [ ] Toast notifications for operations: tag created/assigned, group created, published successfully, errors
+- [ ] Pointer cursor on all interactive elements: many clickable elements show the default cursor
+- [ ] Track row drag affordance: clearer visual signal on hover that the row is draggable
+
+### Dashboard
+- [ ] Playlist card info: show track count and last published date on each card
+- [ ] Delete playlist from the import/playlists selector screen (not from within the editor)
+- [ ] Rename playlist inline (from within the editor header)
+- [ ] Playlist stats row below the header: total runtime, track count per tag, track count per group
+
+### Export / Portability
+- [ ] Export playlist as plain text (one "Title – Artist" per line, copyable to clipboard)
+  - Future: this same clipboard format could be the basis for importing a playlist from pasted text
+
+### Keyboard Shortcuts (Low Priority)
+- [ ] j/k or arrow keys to navigate rows, space/enter to select, basic power-user shortcuts
 
 ### Infrastructure
 - [ ] Enforce HTTPS for dev (e.g. ngrok with stable URL or self-signed cert) and remove the SHA-256 fallback in `src/lib/pkce.ts` + `src/lib/sha256.ts`. Currently using localtunnel which generates a new URL on every restart.
