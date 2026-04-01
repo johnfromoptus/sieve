@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Check, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
+import TopBar from "@/components/TopBar";
 
 interface SpotifyPlaylist {
   providerPlaylistId: string;
@@ -50,20 +51,14 @@ export default function ImportPage() {
   }
 
   return (
-    <div className="min-h-screen bg-zinc-950 p-8">
-      <div className="mx-auto max-w-4xl">
-        <button
-          onClick={() => router.push("/dashboard")}
-          className="mb-6 flex items-center gap-2 text-zinc-400 transition hover:text-white"
-        >
-          <ArrowLeft size={18} />
-          Back to dashboard
-        </button>
+    <div className="min-h-screen bg-zinc-950">
+      <TopBar />
 
+      <div className="mx-auto max-w-4xl px-6 py-8">
         <h1 className="mb-6 text-2xl font-bold text-white">Import from Spotify</h1>
 
         {loading ? (
-          <p className="text-zinc-400">Loading your Spotify playlists...</p>
+          <p className="text-zinc-400">Loading your Spotify playlists…</p>
         ) : (
           <div className="space-y-2">
             {playlists.map((playlist) => (

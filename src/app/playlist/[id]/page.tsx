@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useLayoutEffect, useState, useCallback, useRef, useReducer } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, Plus, X, Tag, GripVertical, ChevronDown, ChevronRight, FolderPlus, Trash2, Palette } from "lucide-react";
+import { Plus, X, Tag, GripVertical, ChevronDown, ChevronRight, FolderPlus, Trash2, Palette, Pencil, Copy } from "lucide-react";
+import { toast } from "sonner";
+import TopBar from "@/components/TopBar";
 import {
   DndContext,
   closestCenter,
@@ -649,6 +651,28 @@ export default function PlaylistPage() {
   const groupDragRef = useRef<string[] | null>(null); // ordered IDs being dragged as a group
   const [groupDragActiveIds, setGroupDragActiveIds] = useState<Set<string>>(new Set());
 
+  // Dirty state / draft
+  const originalOrderRef = useRef<string[]>([]);
+  const [isDirty, setIsDirty] = useState(false);
+  const [changeCount, setChangeCount] = useState(0);
+  const [draftBanner, setDraftBanner] = useState<{ count: number; savedAt: string } | null>(null);
+
+  // Undo / redo
+  const undoStack = useRef<Track[][]>([]);
+  const redoStack = useRef<Track[][]>([]);
+  const [, forceUpdate] = useReducer((x: number) => x + 1, 0);
+
+  // Search / sort
+  const [searchQuery, setSearchQuery] = useState("");
+  const [sortMode, setSortMode] = useState<"default" | "title" | "artist" | "duration">("default");
+
+  // Rename
+  const [editingName, setEditingName] = useState(false);
+  const [nameInput, setNameInput] = useState("");
+
+  // Remove confirmation
+  const [confirmRemoveTrackId, setConfirmRemoveTrackId] = useState<string | null>(null);
+
   // Row context menu
   const [rowContextMenu, setRowContextMenu] = useState<{ trackId: string; x: number; y: number } | null>(null);
   const [rowContextMenuGroupOpen, setRowContextMenuGroupOpen] = useState(false);
@@ -757,6 +781,20 @@ export default function PlaylistPage() {
     const data: Playlist = await res.json();
     setPlaylist(data);
     setLoading(false);
+    const snapshot = data.tracks.map((t: Track) => `${t.id}|${t.group_id}`);
+    originalOrderRef.current = snapshot;
+    setIsDirty(false);
+    setChangeCount(0);
+    try {
+      const draftRaw = localStorage.getItem(`sieve_draft_${id}`);
+      if (draftRaw) {
+        const draft = JSON.parse(draftRaw);
+        const draftIds = new Set(draft.tracks.map((t: { id: string }) => t.id));
+        const playlistIds = new Set(data.tracks.map((t: Track) => t.id));
+        const sameIds = draftIds.size === playlistIds.size && [...draftIds].every((did) => playlistIds.has(did as string));
+        if (sameIds) setDraftBanner({ count: draft.changeCount, savedAt: draft.savedAt });
+      }
+    } catch { /* ignore */ }
   }, [id, router]);
 
   const loadTags = useCallback(async () => {
@@ -786,8 +824,10 @@ export default function PlaylistPage() {
     if (res.ok) {
       const real = await res.json();
       setAllTags((prev) => prev.map((t) => (t.id === tempId ? real : t)));
+      toast.success("Tag created");
     } else {
       setAllTags((prev) => prev.filter((t) => t.id !== tempId));
+      toast.error("Failed to create tag");
     }
   }
 
@@ -1000,6 +1040,7 @@ export default function PlaylistPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ tagId: realTag.id }),
     });
+    toast.success("Tag created");
   }
 
   async function createTagAndAssignToAll(trackIds: string[], name: string, color: string) {
@@ -1087,6 +1128,7 @@ export default function PlaylistPage() {
     for (const trackId of trackIds) {
       assignTrackToGroup(trackId, newGroup.id);
     }
+    toast.success("Group created");
   }
 
   // ── Multi-select ──
@@ -1138,15 +1180,21 @@ export default function PlaylistPage() {
         body: JSON.stringify({ copyName: asCopy || undefined }),
       });
       if (res.ok) {
-        setPublishStatus(asCopy ? `Published as "${asCopy}"!` : "Published!");
-        setTimeout(() => setPublishStatus(null), 3000);
+        toast.success(asCopy ? `Published as "${asCopy}"` : "Published to Spotify!");
+        localStorage.removeItem(`sieve_draft_${id}`);
+        setIsDirty(false);
+        setChangeCount(0);
+        setDraftBanner(null);
         await loadPlaylist();
       } else {
         const data = await res.json();
-        setPublishStatus(`Error: ${data.error}`);
+        const msg = data.error || "Failed to publish";
+        setPublishStatus(`Error: ${msg}`);
+        toast.error(msg);
       }
     } catch {
       setPublishStatus("Failed to publish");
+      toast.error("Failed to publish");
     }
     setPublishing(false);
   }
@@ -1155,15 +1203,30 @@ export default function PlaylistPage() {
 
   const filteredTracks = playlist?.tracks.filter((track) => {
     if (activeFilters.size === 0) return true;
-    return track.tags.some((tag) => activeFilters.has(tag.id));
+    return [...activeFilters].every((id) => track.tags.some((t) => t.id === id));
+  }).filter((track) => {
+    if (!searchQuery) return true;
+    const q = searchQuery.toLowerCase();
+    return (
+      track.title?.toLowerCase().includes(q) ||
+      track.artist?.toLowerCase().includes(q) ||
+      track.album?.toLowerCase().includes(q)
+    );
   }) ?? [];
+
+  const displayTracks = sortMode === "default" ? filteredTracks : [...filteredTracks].sort((a, b) => {
+    if (sortMode === "title") return (a.title ?? "").localeCompare(b.title ?? "");
+    if (sortMode === "artist") return (a.artist ?? "").localeCompare(b.artist ?? "");
+    if (sortMode === "duration") return (a.duration_ms ?? 0) - (b.duration_ms ?? 0);
+    return 0;
+  });
 
   const availableTagIds = new Set(filteredTracks.flatMap((track) => track.tags.map((tag) => tag.id)));
   const visibleTags = activeFilters.size === 0
     ? allTags
     : allTags.filter((tag) => activeFilters.has(tag.id) || availableTagIds.has(tag.id));
 
-  const ungroupedTracks = filteredTracks.filter((t) => !t.group_id);
+  const ungroupedTracks = displayTracks.filter((t) => !t.group_id);
   const groups = playlist?.groups ?? [];
 
   type ListItem = { type: "track"; track: Track } | { type: "group"; group: Group; tracks: Track[] };
@@ -1173,7 +1236,7 @@ export default function PlaylistPage() {
     orderedItems.push({ type: "track", track });
   }
   for (const group of groups) {
-    const groupTracks = filteredTracks
+    const groupTracks = displayTracks
       .filter((t) => t.group_id === group.id)
       .sort((a, b) => (a.group_position ?? a.position) - (b.group_position ?? b.position));
     orderedItems.push({ type: "group", group, tracks: groupTracks });
@@ -1427,6 +1490,11 @@ export default function PlaylistPage() {
 
     if (activeIdStr === overIdStr) return;
 
+    // Push current state to undo stack before mutating
+    undoStack.current = [...undoStack.current, [...playlist.tracks]];
+    redoStack.current = [];
+    forceUpdate();
+
     // Check if dragging a track onto a group header
     if (active.data.current?.type === "track" && over.data.current?.type === "group") {
       const groupId = over.data.current.groupId as string;
@@ -1551,100 +1619,268 @@ export default function PlaylistPage() {
         })),
       }),
     });
+    const current = tracks.map((t) => `${t.id}|${t.group_id}`);
+    const changed = current.filter((v, i) => v !== originalOrderRef.current[i]).length;
+    setIsDirty(changed > 0);
+    setChangeCount(changed);
+    if (changed > 0) {
+      localStorage.setItem(`sieve_draft_${id}`, JSON.stringify({
+        tracks: tracks.map((t) => ({ id: t.id, position: t.position, group_id: t.group_id, group_position: t.group_position })),
+        savedAt: new Date().toISOString(),
+        changeCount: changed,
+      }));
+    }
   }
+
+  const undo = useCallback(() => {
+    if (!undoStack.current.length || !playlist) return;
+    const prev = undoStack.current[undoStack.current.length - 1];
+    undoStack.current = undoStack.current.slice(0, -1);
+    redoStack.current = [...redoStack.current, [...playlist.tracks]];
+    setPlaylist((p) => p ? { ...p, tracks: prev } : p);
+    saveTrackOrderFromTracks(prev);
+    forceUpdate();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playlist]);
+
+  const redo = useCallback(() => {
+    if (!redoStack.current.length || !playlist) return;
+    const next = redoStack.current[redoStack.current.length - 1];
+    redoStack.current = redoStack.current.slice(0, -1);
+    undoStack.current = [...undoStack.current, [...playlist.tracks]];
+    setPlaylist((p) => p ? { ...p, tracks: next } : p);
+    saveTrackOrderFromTracks(next);
+    forceUpdate();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playlist]);
+
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key === "z" && !e.shiftKey) { e.preventDefault(); undo(); }
+      if ((e.metaKey || e.ctrlKey) && (e.key === "y" || (e.key === "z" && e.shiftKey))) { e.preventDefault(); redo(); }
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [undo, redo]);
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-zinc-950">
-        <p className="text-zinc-400">Loading playlist...</p>
+      <div className="min-h-screen bg-zinc-950">
+        <div className="h-14 bg-zinc-900 border-b border-zinc-800" />
+        <div className="mx-auto max-w-4xl px-8 pt-8">
+          <div className="mb-8 flex gap-6 animate-pulse">
+            <div className="h-40 w-40 rounded-xl bg-zinc-800 flex-shrink-0" />
+            <div className="flex flex-col gap-3 pt-2 flex-1">
+              <div className="h-8 w-48 rounded bg-zinc-800" />
+              <div className="h-4 w-24 rounded bg-zinc-700" />
+              <div className="h-4 w-32 rounded bg-zinc-700" />
+            </div>
+          </div>
+          <div className="space-y-2">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <div key={i} className="h-16 rounded-lg bg-zinc-900 animate-pulse" />
+            ))}
+          </div>
+        </div>
       </div>
     );
   }
 
-  return (
-    <div className="min-h-screen bg-zinc-950 p-8">
-      <div className="mx-auto max-w-4xl">
-        <button
-          onClick={() => router.push("/dashboard")}
-          className="mb-6 flex items-center gap-2 text-zinc-400 transition hover:text-white"
-        >
-          <ArrowLeft size={18} />
-          Back
-        </button>
+  const publishSection = playlist ? (
+    <div className="relative" ref={publishMenuRef}>
+      <button
+        onClick={() => publishing ? null : setShowPublishMenu(!showPublishMenu)}
+        disabled={publishing}
+        className={`rounded-full px-5 py-1.5 text-sm font-semibold transition disabled:opacity-50 cursor-pointer ${isDirty ? "bg-amber-500 hover:bg-amber-400 text-black" : "bg-green-500 hover:bg-green-400 text-black"}`}
+      >
+        {publishing ? "Publishing..." : isDirty ? `Publish · ${changeCount} change${changeCount !== 1 ? "s" : ""}` : "Publish to Spotify"}
+      </button>
+      {showPublishMenu && (
+        <div className="absolute right-0 top-11 z-10 min-w-56 rounded-lg border border-zinc-700 bg-zinc-900 p-2 shadow-xl">
+          <button
+            onClick={() => publishToSpotify()}
+            className="flex w-full items-center rounded px-3 py-2 text-sm text-white transition hover:bg-zinc-800 cursor-pointer"
+          >
+            {playlist.provider_playlist_id ? "Overwrite original" : "Create on Spotify"}
+          </button>
+          {showCopyInput ? (
+            <div className="mt-1 flex items-center gap-2 px-3 py-1">
+              <input
+                type="text"
+                value={copyName}
+                onChange={(e) => setCopyName(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && copyName.trim() && publishToSpotify(copyName.trim())}
+                placeholder="New playlist name"
+                className="flex-1 rounded border border-zinc-700 bg-zinc-800 px-2 py-1 text-sm text-white placeholder-zinc-500 outline-none focus:border-zinc-500"
+                autoFocus
+              />
+              <button
+                onClick={() => copyName.trim() && publishToSpotify(copyName.trim())}
+                className="text-sm text-green-400 hover:text-green-300 cursor-pointer"
+              >
+                Go
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => { setCopyName(playlist.name + " (copy)"); setShowCopyInput(true); }}
+              className="flex w-full items-center rounded px-3 py-2 text-sm text-white transition hover:bg-zinc-800 cursor-pointer"
+            >
+              Publish as copy...
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  ) : null;
 
+  return (
+    <div className="min-h-screen bg-zinc-950">
+      <TopBar breadcrumb="Your playlists" title={playlist?.name ?? ""} rightContent={publishSection} />
+
+      {/* Draft restore banner */}
+      {draftBanner && (
+        <div className="bg-amber-950 border-b border-amber-800 px-6 py-2 flex items-center gap-4 text-sm text-amber-200">
+          <span>You have {draftBanner.count} unsaved change{draftBanner.count !== 1 ? "s" : ""} from a previous session.</span>
+          <button className="underline cursor-pointer" onClick={() => {
+            try {
+              const draftRaw = localStorage.getItem(`sieve_draft_${id}`);
+              if (!draftRaw || !playlist) return;
+              const draft = JSON.parse(draftRaw);
+              const trackMap = new Map(playlist.tracks.map((t) => [t.id, t]));
+              const restored = draft.tracks
+                .map((dt: { id: string; position: number; group_id: string | null; group_position: number | null }) => {
+                  const t = trackMap.get(dt.id);
+                  return t ? { ...t, position: dt.position, group_id: dt.group_id, group_position: dt.group_position } : null;
+                })
+                .filter(Boolean) as Track[];
+              setPlaylist((p) => p ? { ...p, tracks: restored } : p);
+              saveTrackOrderFromTracks(restored);
+              setDraftBanner(null);
+            } catch { setDraftBanner(null); }
+          }}>Restore</button>
+          <button className="underline cursor-pointer text-amber-400" onClick={() => {
+            setDraftBanner(null);
+            localStorage.removeItem(`sieve_draft_${id}`);
+          }}>Dismiss</button>
+        </div>
+      )}
+
+      <div className="mx-auto max-w-4xl px-8 py-8">
         {playlist && (
           <>
             {/* Header */}
             <div className="mb-8 flex items-start gap-6">
               {playlist.cover_url ? (
-                <img src={playlist.cover_url} alt="" className="h-40 w-40 rounded-xl object-cover" />
+                <img src={playlist.cover_url} alt="" className="h-40 w-40 rounded-xl object-cover flex-shrink-0" />
               ) : (
-                <div className="flex h-40 w-40 items-center justify-center rounded-xl bg-zinc-800 text-4xl text-zinc-600">♪</div>
+                <div className="flex h-40 w-40 flex-shrink-0 items-center justify-center rounded-xl bg-zinc-800 text-4xl text-zinc-600">♪</div>
               )}
-              <div className="flex-1">
-                <h1 className="text-3xl font-bold text-white">{playlist.name}</h1>
+              <div className="flex-1 min-w-0">
+                {editingName ? (
+                  <input
+                    autoFocus
+                    value={nameInput}
+                    onChange={(e) => setNameInput(e.target.value)}
+                    onBlur={async () => {
+                      if (nameInput.trim() && nameInput.trim() !== playlist.name) {
+                        const res = await fetch(`/api/playlists/${id}`, {
+                          method: "PATCH",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ name: nameInput.trim() }),
+                        });
+                        if (res.ok) {
+                          setPlaylist((p) => p ? { ...p, name: nameInput.trim() } : p);
+                          toast.success("Playlist renamed");
+                        } else {
+                          toast.error("Failed to rename");
+                        }
+                      }
+                      setEditingName(false);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                      if (e.key === "Escape") setEditingName(false);
+                    }}
+                    className="text-3xl font-bold text-white bg-transparent border-b border-zinc-600 focus:outline-none focus:border-white w-full"
+                  />
+                ) : (
+                  <div className="group flex items-center gap-2">
+                    <h1 className="text-3xl font-bold text-white">{playlist.name}</h1>
+                    <button
+                      onClick={() => { setNameInput(playlist.name); setEditingName(true); }}
+                      className="opacity-0 group-hover:opacity-100 text-zinc-500 hover:text-zinc-300 cursor-pointer transition-opacity"
+                    >
+                      <Pencil size={16} />
+                    </button>
+                  </div>
+                )}
                 {playlist.description && <p className="mt-2 text-zinc-400">{playlist.description}</p>}
                 <p className="mt-2 text-sm text-zinc-500">
-                  {filteredTracks.length}{activeFilters.size > 0 ? ` of ${playlist.tracks.length}` : ""} tracks
-                  {groups.length > 0 && ` · ${groups.length} groups`}
+                  {filteredTracks.length}{activeFilters.size > 0 || searchQuery ? ` of ${playlist.tracks.length}` : ""} tracks
+                </p>
+                <p className="mt-1 text-sm text-zinc-500">
+                  {formatDuration(playlist.tracks.reduce((s, t) => s + (t.duration_ms ?? 0), 0))} total
+                  {groups.length > 0 && ` · ${groups.length} group${groups.length !== 1 ? "s" : ""}`}
+                  {allTags.length > 0 && ` · ${allTags.length} tag${allTags.length !== 1 ? "s" : ""}`}
                 </p>
                 {playlist.published_at && (
                   <p className="mt-1 text-xs text-zinc-600">
                     Last published {new Date(playlist.published_at).toLocaleDateString()}
                   </p>
                 )}
-                <div className="relative mt-4 inline-block" ref={publishMenuRef}>
+                <div className="mt-2 flex items-center gap-3">
                   <button
-                    onClick={() => publishing ? null : setShowPublishMenu(!showPublishMenu)}
-                    disabled={publishing}
-                    className="rounded-full bg-green-500 px-6 py-2 text-sm font-semibold text-black transition hover:bg-green-400 disabled:opacity-50"
+                    onClick={() => {
+                      const text = playlist.tracks.map((t) => `${t.title ?? "Unknown"} — ${t.artist ?? "Unknown"}`).join("\n");
+                      navigator.clipboard.writeText(text).then(() => toast.success("Copied to clipboard"));
+                    }}
+                    className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-300 cursor-pointer"
                   >
-                    {publishing ? "Publishing..." : "Publish to Spotify"}
+                    <Copy size={13} />
+                    Export
                   </button>
-                  {showPublishMenu && (
-                    <div className="absolute left-0 top-11 z-10 min-w-56 rounded-lg border border-zinc-700 bg-zinc-900 p-2 shadow-xl">
-                      <button
-                        onClick={() => publishToSpotify()}
-                        className="flex w-full items-center rounded px-3 py-2 text-sm text-white transition hover:bg-zinc-800"
-                      >
-                        {playlist.provider_playlist_id ? "Overwrite original" : "Create on Spotify"}
-                      </button>
-                      {showCopyInput ? (
-                        <div className="mt-1 flex items-center gap-2 px-3 py-1">
-                          <input
-                            type="text"
-                            value={copyName}
-                            onChange={(e) => setCopyName(e.target.value)}
-                            onKeyDown={(e) => e.key === "Enter" && copyName.trim() && publishToSpotify(copyName.trim())}
-                            placeholder="New playlist name"
-                            className="flex-1 rounded border border-zinc-700 bg-zinc-800 px-2 py-1 text-sm text-white placeholder-zinc-500 outline-none focus:border-zinc-500"
-                            autoFocus
-                          />
-                          <button
-                            onClick={() => copyName.trim() && publishToSpotify(copyName.trim())}
-                            className="text-sm text-green-400 hover:text-green-300"
-                          >
-                            Go
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => { setCopyName(playlist.name + " (copy)"); setShowCopyInput(true); }}
-                          className="flex w-full items-center rounded px-3 py-2 text-sm text-white transition hover:bg-zinc-800"
-                        >
-                          Publish as copy...
-                        </button>
-                      )}
-                    </div>
-                  )}
                 </div>
                 {publishStatus && (
-                  <span className={`ml-3 text-sm ${publishStatus.startsWith("Error") ? "text-red-400" : "text-green-400"}`}>
+                  <span className={`mt-2 block text-sm ${publishStatus.startsWith("Error") ? "text-red-400" : "text-green-400"}`}>
                     {publishStatus}
                   </span>
                 )}
               </div>
             </div>
+
+            {/* Search bar */}
+            <div className="relative mb-3">
+              <input
+                type="text"
+                placeholder="Search tracks..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full rounded-lg bg-zinc-900 border border-zinc-700 px-4 py-2 text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-zinc-500 pr-8"
+              />
+              {searchQuery && (
+                <button onClick={() => setSearchQuery("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 cursor-pointer">
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+
+            {/* Sort controls */}
+            <div className="flex items-center gap-2 mb-3">
+              <span className="text-xs text-zinc-500">Sort:</span>
+              {(["default", "title", "artist", "duration"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  onClick={() => setSortMode(mode)}
+                  className={`text-xs px-2 py-1 rounded cursor-pointer transition-colors ${sortMode === mode ? "bg-zinc-700 text-white" : "text-zinc-500 hover:text-zinc-300"}`}
+                >
+                  {mode === "default" ? "Default" : mode.charAt(0).toUpperCase() + mode.slice(1)}
+                </button>
+              ))}
+            </div>
+            {sortMode !== "default" && (
+              <p className="text-xs text-amber-500 mb-2">Sorted by {sortMode} — drag reordering disabled. Switch to Default to drag.</p>
+            )}
 
             {/* Tag filter bar */}
             <div className="mb-4 flex flex-wrap items-center gap-2">
@@ -1733,7 +1969,7 @@ export default function PlaylistPage() {
             {/* Track list with drag-and-drop */}
             <div ref={trackListRef}>
             <DndContext
-              sensors={sensors}
+              sensors={sortMode !== "default" ? [] : sensors}
               collisionDetection={customCollisionDetection}
               onDragStart={handleDragStart}
               onDragMove={handleDragMove}
@@ -1935,10 +2171,18 @@ export default function PlaylistPage() {
               </button>
               <button
                 onClick={() => setRowContextMenuGroupOpen(true)}
-                className="flex w-full items-center gap-2 rounded px-3 py-2 text-sm text-white transition hover:bg-zinc-800"
+                className="flex w-full items-center gap-2 rounded px-3 py-2 text-sm text-white transition hover:bg-zinc-800 cursor-pointer"
               >
                 <FolderPlus size={14} />
                 Add to group
+              </button>
+              <div className="my-1 border-t border-zinc-700" />
+              <button
+                onClick={() => { setConfirmRemoveTrackId(rowContextMenu!.trackId); setRowContextMenu(null); }}
+                className="flex w-full items-center gap-2 rounded px-3 py-2 text-sm text-red-400 transition hover:bg-zinc-700 cursor-pointer"
+              >
+                <Trash2 size={14} />
+                Remove from playlist
               </button>
             </>
           ) : (
@@ -2161,12 +2405,64 @@ export default function PlaylistPage() {
           <div className="h-4 w-px bg-zinc-600" />
           <button
             onClick={() => setSelectedTracks(new Set())}
-            className="rounded-full p-1 text-zinc-400 transition hover:bg-zinc-700 hover:text-white"
+            className="rounded-full p-1 text-zinc-400 transition hover:bg-zinc-700 hover:text-white cursor-pointer"
           >
             <X size={14} />
           </button>
         </div>
       </div>
+
+      {/* Undo / redo pill */}
+      {undoStack.current.length > 0 && (
+        <div className="fixed bottom-6 left-6 flex gap-2 z-50">
+          <button onClick={undo} className="flex items-center gap-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-700 cursor-pointer">
+            ↩ Undo
+          </button>
+          {redoStack.current.length > 0 && (
+            <button onClick={redo} className="flex items-center gap-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-700 cursor-pointer">
+              ↪ Redo
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Remove from playlist confirmation */}
+      {confirmRemoveTrackId && (() => {
+        const track = playlist?.tracks.find((t) => t.id === confirmRemoveTrackId);
+        const isMulti = selectedTracks.has(confirmRemoveTrackId) && selectedTracks.size > 1;
+        return (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60">
+            <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-6 max-w-sm w-full mx-4">
+              <p className="text-white font-medium mb-1">
+                {isMulti ? `Remove ${selectedTracks.size} tracks?` : `Remove "${track?.title}"?`}
+              </p>
+              <p className="text-zinc-400 text-sm mb-6">
+                This removes {isMulti ? "them" : "it"} from your sieve playlist. This cannot be undone.
+              </p>
+              <div className="flex gap-3 justify-end">
+                <button onClick={() => setConfirmRemoveTrackId(null)} className="px-4 py-2 text-sm text-zinc-400 hover:text-white cursor-pointer">
+                  Cancel
+                </button>
+                <button
+                  onClick={async () => {
+                    const idsToRemove = isMulti ? [...selectedTracks] : [confirmRemoveTrackId!];
+                    for (const tid of idsToRemove) {
+                      await fetch(`/api/playlists/${id}/tracks/${tid}`, { method: "DELETE" });
+                    }
+                    setConfirmRemoveTrackId(null);
+                    setSelectedTracks(new Set());
+                    await loadPlaylist();
+                    toast.success(isMulti ? `Removed ${idsToRemove.length} tracks` : "Track removed");
+                  }}
+                  className="px-4 py-2 text-sm bg-red-600 hover:bg-red-500 text-white rounded-lg cursor-pointer"
+                >
+                  Remove
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
