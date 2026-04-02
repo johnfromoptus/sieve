@@ -2,7 +2,7 @@
 
 import { useEffect, useLayoutEffect, useState, useCallback, useRef, useReducer } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { Plus, X, Tag, GripVertical, ChevronDown, ChevronRight, FolderPlus, Trash2, Palette, Pencil, Copy } from "lucide-react";
+import { Plus, X, Tag, GripVertical, ChevronDown, ChevronUp, ChevronRight, FolderPlus, Trash2, Palette, Pencil, Copy } from "lucide-react";
 import { toast } from "sonner";
 import TopBar from "@/components/TopBar";
 import {
@@ -96,7 +96,6 @@ function TrackRowContent({
   popoverRef,
   onAssignTrack,
   dragHandleProps,
-  playlistId,
   createTagAndAssign,
   createGroupAndAssign,
   onColorChange,
@@ -113,7 +112,6 @@ function TrackRowContent({
   popoverRef: React.RefObject<HTMLDivElement | null>;
   onAssignTrack: (trackId: string, groupId: string | null) => void;
   dragHandleProps?: React.HTMLAttributes<HTMLButtonElement>;
-  playlistId: string;
   createTagAndAssign: (trackId: string, name: string, color: string) => Promise<void>;
   createGroupAndAssign: (trackIds: string[], name: string) => Promise<void>;
   onColorChange: (trackId: string, color: string | null) => void;
@@ -123,7 +121,7 @@ function TrackRowContent({
   const [showGroupMenu, setShowGroupMenu] = useState(false);
   const groupMenuRef = useRef<HTMLDivElement>(null);
   const [newTagName, setNewTagName] = useState("");
-  const [newTagColor, setNewTagColor] = useState(TAG_COLORS[Math.floor(Math.random() * TAG_COLORS.length)]);
+  const [newTagColor, setNewTagColor] = useState(() => TAG_COLORS[Math.floor(Math.random() * TAG_COLORS.length)]);
   const [newGroupName, setNewGroupName] = useState("");
   const [showNewGroupInput, setShowNewGroupInput] = useState(false);
   const [showColorPicker, setShowColorPicker] = useState(false);
@@ -386,7 +384,6 @@ function SortableTrackRow({
   toggleTagOnTrack,
   popoverRef,
   onAssignTrack,
-  playlistId,
   createTagAndAssign,
   createGroupAndAssign,
   onColorChange,
@@ -407,7 +404,6 @@ function SortableTrackRow({
   toggleTagOnTrack: (trackId: string, tag: TagData, hasTag: boolean) => void;
   popoverRef: React.RefObject<HTMLDivElement | null>;
   onAssignTrack: (trackId: string, groupId: string | null) => void;
-  playlistId: string;
   createTagAndAssign: (trackId: string, name: string, color: string) => Promise<void>;
   createGroupAndAssign: (trackIds: string[], name: string) => Promise<void>;
   onColorChange: (trackId: string, color: string | null) => void;
@@ -461,7 +457,6 @@ function SortableTrackRow({
         popoverRef={popoverRef}
         onAssignTrack={onAssignTrack}
         dragHandleProps={{ ...attributes, ...listeners } as React.HTMLAttributes<HTMLButtonElement>}
-        playlistId={playlistId}
         createTagAndAssign={createTagAndAssign}
         createGroupAndAssign={createGroupAndAssign}
         onColorChange={onColorChange}
@@ -609,8 +604,6 @@ export default function PlaylistPage() {
   const [newTagName, setNewTagName] = useState("");
   const [newTagColor, setNewTagColor] = useState(TAG_COLORS[0]);
   const [tagPopoverTrack, setTagPopoverTrack] = useState<string | null>(null);
-  const [showNewGroup, setShowNewGroup] = useState(false);
-  const [newGroupName, setNewGroupName] = useState("");
   const [activeId, setActiveId] = useState<string | null>(null);
   const savedScrollY = useRef<number | null>(null);
   const [publishing, setPublishing] = useState(false);
@@ -665,6 +658,16 @@ export default function PlaylistPage() {
   // Search / sort
   const [searchQuery, setSearchQuery] = useState("");
   const [sortMode, setSortMode] = useState<"default" | "title" | "artist" | "duration">("default");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  function toggleSort(mode: "default" | "title" | "artist" | "duration") {
+    if (mode === sortMode) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortMode(mode);
+      setSortDir("asc");
+    }
+  }
 
   // Rename
   const [editingName, setEditingName] = useState(false);
@@ -896,27 +899,6 @@ export default function PlaylistPage() {
   }, [activeFilters]);
 
   // ── Group operations ──
-
-  async function createGroup() {
-    if (!newGroupName.trim() || !playlist) return;
-    const tempId = crypto.randomUUID();
-    const maxPos = Math.max(0, ...playlist.groups.map((g) => g.position));
-    const optimisticGroup: Group = { id: tempId, name: newGroupName.trim(), position: maxPos + 10, color: null };
-    setPlaylist((prev) => prev ? { ...prev, groups: [...prev.groups, optimisticGroup] } : prev);
-    setNewGroupName("");
-    setShowNewGroup(false);
-    const res = await fetch(`/api/playlists/${id}/groups`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: optimisticGroup.name }),
-    });
-    if (res.ok) {
-      const real = await res.json();
-      setPlaylist((prev) => prev ? { ...prev, groups: prev.groups.map((g) => g.id === tempId ? real : g) } : prev);
-    } else {
-      setPlaylist((prev) => prev ? { ...prev, groups: prev.groups.filter((g) => g.id !== tempId) } : prev);
-    }
-  }
 
   async function deleteGroup(groupId: string) {
     setPlaylist((prev) => {
@@ -1215,10 +1197,11 @@ export default function PlaylistPage() {
   }) ?? [];
 
   const displayTracks = sortMode === "default" ? filteredTracks : [...filteredTracks].sort((a, b) => {
-    if (sortMode === "title") return (a.title ?? "").localeCompare(b.title ?? "");
-    if (sortMode === "artist") return (a.artist ?? "").localeCompare(b.artist ?? "");
-    if (sortMode === "duration") return (a.duration_ms ?? 0) - (b.duration_ms ?? 0);
-    return 0;
+    let result = 0;
+    if (sortMode === "title") result = (a.title ?? "").localeCompare(b.title ?? "");
+    else if (sortMode === "artist") result = (a.artist ?? "").localeCompare(b.artist ?? "");
+    else if (sortMode === "duration") result = (a.duration_ms ?? 0) - (b.duration_ms ?? 0);
+    return sortDir === "asc" ? result : -result;
   });
 
   const availableTagIds = new Set(filteredTracks.flatMap((track) => track.tags.map((tag) => tag.id)));
@@ -1241,11 +1224,13 @@ export default function PlaylistPage() {
       .sort((a, b) => (a.group_position ?? a.position) - (b.group_position ?? b.position));
     orderedItems.push({ type: "group", group, tracks: groupTracks });
   }
-  orderedItems.sort((a, b) => {
-    const posA = a.type === "track" ? a.track.position : a.group.position;
-    const posB = b.type === "track" ? b.track.position : b.group.position;
-    return posA - posB;
-  });
+  if (sortMode === "default") {
+    orderedItems.sort((a, b) => {
+      const posA = a.type === "track" ? a.track.position : a.group.position;
+      const posB = b.type === "track" ? b.track.position : b.group.position;
+      return posA - posB;
+    });
+  }
 
   const topLevelSortableIds = orderedItems.map((item) =>
     item.type === "track" ? item.track.id : `group-${item.group.id}`
@@ -1736,7 +1721,7 @@ export default function PlaylistPage() {
 
   return (
     <div className="min-h-screen bg-zinc-950">
-      <TopBar breadcrumb="Your playlists" title={playlist?.name ?? ""} rightContent={publishSection} />
+      <TopBar breadcrumb="Your playlists" breadcrumbHref="/dashboard" title={playlist?.name ?? ""} rightContent={publishSection} />
 
       {/* Draft restore banner */}
       {draftBanner && (
@@ -1849,41 +1834,9 @@ export default function PlaylistPage() {
               </div>
             </div>
 
-            {/* Search bar */}
-            <div className="relative mb-3">
-              <input
-                type="text"
-                placeholder="Search tracks..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full rounded-lg bg-zinc-900 border border-zinc-700 px-4 py-2 text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-zinc-500 pr-8"
-              />
-              {searchQuery && (
-                <button onClick={() => setSearchQuery("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 cursor-pointer">
-                  <X size={14} />
-                </button>
-              )}
-            </div>
-
-            {/* Sort controls */}
-            <div className="flex items-center gap-2 mb-3">
-              <span className="text-xs text-zinc-500">Sort:</span>
-              {(["default", "title", "artist", "duration"] as const).map((mode) => (
-                <button
-                  key={mode}
-                  onClick={() => setSortMode(mode)}
-                  className={`text-xs px-2 py-1 rounded cursor-pointer transition-colors ${sortMode === mode ? "bg-zinc-700 text-white" : "text-zinc-500 hover:text-zinc-300"}`}
-                >
-                  {mode === "default" ? "Default" : mode.charAt(0).toUpperCase() + mode.slice(1)}
-                </button>
-              ))}
-            </div>
-            {sortMode !== "default" && (
-              <p className="text-xs text-amber-500 mb-2">Sorted by {sortMode} — drag reordering disabled. Switch to Default to drag.</p>
-            )}
-
-            {/* Tag filter bar */}
-            <div className="mb-4 flex flex-wrap items-center gap-2">
+            {/* Tags + Search */}
+            <div className="mb-4 flex items-start gap-3">
+              <div className="flex flex-wrap items-center gap-2 flex-1 min-w-0">
               {visibleTags.map((tag) => (
                 <button
                   key={tag.id}
@@ -1937,33 +1890,58 @@ export default function PlaylistPage() {
                   New tag
                 </button>
               )}
+              </div>
+              {/* Search bar — right-aligned, same row as tags */}
+              <div className="relative shrink-0">
+                <input
+                  type="text"
+                  placeholder="Search..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-40 rounded-lg bg-zinc-900 border border-zinc-700 px-3 py-1 text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-zinc-500 pr-7"
+                />
+                {searchQuery && (
+                  <button onClick={() => setSearchQuery("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 cursor-pointer">
+                    <X size={12} />
+                  </button>
+                )}
+              </div>
             </div>
 
-            {/* Group controls */}
-            <div className="mb-4 flex items-center gap-2">
-              {showNewGroup ? (
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    value={newGroupName}
-                    onChange={(e) => setNewGroupName(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && createGroup()}
-                    placeholder="Group name"
-                    className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1 text-sm text-white placeholder-zinc-500 outline-none focus:border-zinc-500"
-                    autoFocus
-                  />
-                  <button onClick={createGroup} className="text-sm text-green-400 hover:text-green-300">Create</button>
-                  <button onClick={() => setShowNewGroup(false)} className="text-sm text-zinc-500 hover:text-white">Cancel</button>
-                </div>
-              ) : (
+            {/* Column headers */}
+            <div className="flex items-center gap-4 px-4 py-1.5 mb-1 border-b border-zinc-800 text-xs text-zinc-500 select-none">
+              <button
+                onClick={() => toggleSort("default")}
+                className={`w-8 text-right transition-colors cursor-pointer ${sortMode === "default" ? "text-white" : "hover:text-zinc-300"}`}
+              >
+                #
+              </button>
+              <span className="shrink-0 w-[62px]" />
+              <div className="flex-1 min-w-0 flex items-center gap-2">
                 <button
-                  onClick={() => setShowNewGroup(true)}
-                  className="flex items-center gap-1 rounded border border-dashed border-zinc-700 px-3 py-1.5 text-sm text-zinc-500 transition hover:border-zinc-500 hover:text-zinc-300"
+                  onClick={() => toggleSort("title")}
+                  className={`flex items-center gap-0.5 transition-colors cursor-pointer ${sortMode === "title" ? "text-white" : "hover:text-zinc-300"}`}
                 >
-                  <FolderPlus size={14} />
-                  New group
+                  Title
+                  {sortMode === "title" && (sortDir === "asc" ? <ChevronUp size={10} /> : <ChevronDown size={10} />)}
                 </button>
-              )}
+                <span className="text-zinc-700">/</span>
+                <button
+                  onClick={() => toggleSort("artist")}
+                  className={`flex items-center gap-0.5 transition-colors cursor-pointer ${sortMode === "artist" ? "text-white" : "hover:text-zinc-300"}`}
+                >
+                  Artist
+                  {sortMode === "artist" && (sortDir === "asc" ? <ChevronUp size={10} /> : <ChevronDown size={10} />)}
+                </button>
+              </div>
+              <button
+                onClick={() => toggleSort("duration")}
+                className={`flex items-center gap-0.5 transition-colors cursor-pointer ${sortMode === "duration" ? "text-white" : "hover:text-zinc-300"}`}
+              >
+                Duration
+                {sortMode === "duration" && (sortDir === "asc" ? <ChevronUp size={10} /> : <ChevronDown size={10} />)}
+              </button>
+              <span className="w-4 shrink-0" />
             </div>
 
             {/* Track list with drag-and-drop */}

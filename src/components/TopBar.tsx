@@ -1,19 +1,22 @@
 "use client";
 
-import { ReactNode, useEffect, useState } from "react";
+import { ReactNode, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
 interface TopBarProps {
   breadcrumb?: string;
+  breadcrumbHref?: string;
   title?: string;
   rightContent?: ReactNode;
 }
 
-export default function TopBar({ breadcrumb, title, rightContent }: TopBarProps) {
+export default function TopBar({ breadcrumb, breadcrumbHref, title, rightContent }: TopBarProps) {
   const router = useRouter();
   const [userInitial, setUserInitial] = useState<string | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const supabase = createClient();
@@ -22,6 +25,16 @@ export default function TopBar({ breadcrumb, title, rightContent }: TopBarProps)
       if (email) setUserInitial(email[0].toUpperCase());
     });
   }, []);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    }
+    if (menuOpen) document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [menuOpen]);
 
   async function handleSignOut() {
     const supabase = createClient();
@@ -40,7 +53,13 @@ export default function TopBar({ breadcrumb, title, rightContent }: TopBarProps)
           {breadcrumb && (
             <>
               <span className="text-zinc-600 mx-2">/</span>
-              <span className="text-zinc-400 text-sm shrink-0">{breadcrumb}</span>
+              {breadcrumbHref ? (
+                <Link href={breadcrumbHref} className="text-zinc-400 text-sm shrink-0 hover:text-zinc-200 transition-colors">
+                  {breadcrumb}
+                </Link>
+              ) : (
+                <span className="text-zinc-400 text-sm shrink-0">{breadcrumb}</span>
+              )}
             </>
           )}
           {breadcrumb && title && (
@@ -55,13 +74,24 @@ export default function TopBar({ breadcrumb, title, rightContent }: TopBarProps)
         <div className="flex flex-row gap-3 items-center shrink-0">
           {rightContent}
           {userInitial && (
-            <button
-              onClick={handleSignOut}
-              className="w-8 h-8 rounded-full bg-zinc-700 flex items-center justify-center text-xs text-zinc-300 cursor-pointer hover:bg-zinc-600"
-              aria-label="Sign out"
-            >
-              {userInitial}
-            </button>
+            <div className="relative" ref={menuRef}>
+              <button
+                onClick={() => setMenuOpen((o) => !o)}
+                className="w-8 h-8 rounded-full bg-zinc-700 flex items-center justify-center text-xs text-zinc-300 cursor-pointer hover:bg-zinc-600"
+              >
+                {userInitial}
+              </button>
+              {menuOpen && (
+                <div className="absolute right-0 top-10 w-36 rounded-lg border border-zinc-700 bg-zinc-900 py-1 shadow-xl z-50">
+                  <button
+                    onClick={handleSignOut}
+                    className="w-full px-3 py-2 text-left text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors cursor-pointer"
+                  >
+                    Sign out
+                  </button>
+                </div>
+              )}
+            </div>
           )}
         </div>
       </div>
