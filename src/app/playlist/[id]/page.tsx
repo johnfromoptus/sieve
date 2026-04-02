@@ -1883,7 +1883,7 @@ export default function PlaylistPage() {
               ) : (
                 <button
                   onClick={() => { setNewTagColor(TAG_COLORS[Math.floor(Math.random() * TAG_COLORS.length)]); setShowNewTag(true); }}
-                  className="flex items-center gap-1 rounded-full border border-dashed border-zinc-700 px-3 py-1 text-sm text-zinc-500 transition hover:border-zinc-500 hover:text-zinc-300"
+                  className="flex items-center gap-1 rounded-full border border-dashed border-zinc-700 px-3 py-1 text-sm text-zinc-500 transition hover:border-zinc-500 hover:text-zinc-300 cursor-pointer"
                 >
                   <Plus size={14} />
                   New tag
