@@ -233,7 +233,7 @@ function TrackRowContent({
         <div className="relative" ref={tagPopoverTrack === track.id ? popoverRef : undefined}>
           <button
             onClick={(e) => { e.stopPropagation(); setShowGroupMenu(false); setTagPopoverTrack(tagPopoverTrack === track.id ? null : track.id); }}
-            className="ml-1 rounded p-1 text-zinc-600 opacity-0 transition hover:bg-zinc-800 hover:text-zinc-300 group-hover:opacity-100"
+            className="ml-1 rounded p-1 text-zinc-600 opacity-0 transition hover:bg-zinc-800 hover:text-zinc-300 group-hover:opacity-100 cursor-pointer"
           >
             <Tag size={14} />
           </button>
@@ -295,7 +295,7 @@ function TrackRowContent({
       <div className="relative" ref={groupMenuRef}>
         <button
           onClick={(e) => { e.stopPropagation(); setTagPopoverTrack(null); setShowGroupMenu(!showGroupMenu); }}
-          className="rounded p-1 text-zinc-600 opacity-0 transition hover:bg-zinc-800 hover:text-zinc-300 group-hover:opacity-100"
+          className="rounded p-1 text-zinc-600 opacity-0 transition hover:bg-zinc-800 hover:text-zinc-300 group-hover:opacity-100 cursor-pointer"
         >
           <FolderPlus size={14} />
         </button>
@@ -1841,7 +1841,7 @@ export default function PlaylistPage() {
                   key={tag.id}
                   onClick={() => toggleFilter(tag.id)}
                   onContextMenu={(e) => { e.preventDefault(); setTagContextMenu({ tagId: tag.id, x: e.clientX, y: e.clientY }); }}
-                  className="flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-medium transition"
+                  className="flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-medium transition cursor-pointer"
                   style={{
                     backgroundColor: activeFilters.has(tag.id) ? (tag.color || "#6b7280") : "transparent",
                     border: `1px solid ${tag.color || "#6b7280"}`,
@@ -2359,21 +2359,21 @@ export default function PlaylistPage() {
           <button
             onClick={() => { setFloatingTagOpen((o) => !o); setFloatingGroupOpen(false); setFloatingColorOpen(false); }}
             title="Assign tag"
-            className="rounded p-1 text-zinc-400 transition hover:bg-zinc-700 hover:text-white"
+            className="rounded p-1 text-zinc-400 transition hover:bg-zinc-700 hover:text-white cursor-pointer"
           >
             <Tag size={14} />
           </button>
           <button
             onClick={() => { setFloatingGroupOpen((o) => !o); setFloatingTagOpen(false); setFloatingColorOpen(false); }}
             title="Add to group"
-            className="rounded p-1 text-zinc-400 transition hover:bg-zinc-700 hover:text-white"
+            className="rounded p-1 text-zinc-400 transition hover:bg-zinc-700 hover:text-white cursor-pointer"
           >
             <FolderPlus size={14} />
           </button>
           <button
             onClick={() => { setFloatingColorOpen((o) => !o); setFloatingGroupOpen(false); setFloatingTagOpen(false); }}
             title="Set colour"
-            className="rounded p-1 text-zinc-400 transition hover:bg-zinc-700 hover:text-white"
+            className="rounded p-1 text-zinc-400 transition hover:bg-zinc-700 hover:text-white cursor-pointer"
           >
             <Palette size={14} />
           </button>
