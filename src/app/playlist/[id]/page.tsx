@@ -570,7 +570,6 @@ function SortableGroup({
                 toggleTagOnTrack={toggleTagOnTrack}
                 popoverRef={popoverRef}
                 onAssignTrack={onAssignTrack}
-                playlistId={playlistId}
                 createTagAndAssign={createTagAndAssign}
                 createGroupAndAssign={createGroupAndAssign}
                 onColorChange={onColorChange}
@@ -1968,7 +1967,6 @@ export default function PlaylistPage() {
                         toggleTagOnTrack={toggleTagOnTrack}
                         popoverRef={popoverRef}
                         onAssignTrack={assignTrackToGroup}
-                        playlistId={id}
                         createTagAndAssign={createTagAndAssign}
                         createGroupAndAssign={createGroupAndAssign}
                         onColorChange={handleColorChange}
@@ -2063,7 +2061,6 @@ export default function PlaylistPage() {
                           popoverRef={{ current: null }}
                           onAssignTrack={() => {}}
                           dragHandleProps={{ className: "cursor-grabbing text-zinc-400" } as React.HTMLAttributes<HTMLButtonElement>}
-                          playlistId={id}
                           createTagAndAssign={async () => {}}
                           createGroupAndAssign={async () => {}}
                           onColorChange={() => {}}
